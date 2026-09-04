@@ -1,5 +1,7 @@
+using Idempo.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace Idempo.AspNetCore;
 
@@ -16,12 +18,15 @@ public static class IdempoServiceCollectionExtensions
     public static IServiceCollection AddIdempo(
         this IServiceCollection services,
         Action<IdempotencyOptions>? configure = null,
-        Action<IdempotencyCleanupOptions>? configureCleanup = null)
+        Action<IdempotencyCleanupOptions>? configureCleanup = null,
+        Action<IdempotencyHttpOptions>? configureHttp = null)
     {
         services.AddOptions();
+
+        var optionsBuilder = services.AddOptions<IdempotencyOptions>().ValidateOnStart();
         if (configure is not null)
         {
-            services.Configure(configure);
+            optionsBuilder.Configure(configure);
         }
 
         if (configureCleanup is not null)
@@ -29,8 +34,17 @@ public static class IdempoServiceCollectionExtensions
             services.Configure(configureCleanup);
         }
 
+        if (configureHttp is not null)
+        {
+            services.Configure(configureHttp);
+        }
+
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<IdempotencyOptions>, IdempotencyOptionsValidator>());
+
         services.TryAddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>();
         services.TryAddSingleton<IIdempotencyFingerprintProvider, Sha256IdempotencyFingerprintProvider>();
+        services.TryAddSingleton<IdempotencyMetrics>();
         services.AddHostedService<IdempotencyCleanupService>();
 
         return services;

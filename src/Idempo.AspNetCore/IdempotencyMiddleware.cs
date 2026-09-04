@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Idempo.Diagnostics;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Idempo.AspNetCore;
@@ -29,7 +32,10 @@ public sealed class IdempotencyMiddleware
         HttpContext context,
         IIdempotencyStore store,
         IIdempotencyFingerprintProvider fingerprintProvider,
-        IOptions<IdempotencyOptions> optionsAccessor)
+        IOptions<IdempotencyOptions> optionsAccessor,
+        IOptions<IdempotencyHttpOptions> httpOptionsAccessor,
+        IdempotencyMetrics metrics,
+        ILogger<IdempotencyMiddleware> logger)
     {
         var options = optionsAccessor.Value;
         var cancellationToken = context.RequestAborted;
@@ -41,11 +47,13 @@ public sealed class IdempotencyMiddleware
             return;
         }
 
-        var key = context.Request.Headers[options.HeaderName].ToString();
-        if (string.IsNullOrWhiteSpace(key))
+        var rawKey = context.Request.Headers[options.HeaderName].ToString();
+        if (string.IsNullOrWhiteSpace(rawKey))
         {
             if (options.RequireHeaderOnMutatingRequests)
             {
+                logger.LogWarning("Rejected {Method} {Path}: missing required '{Header}' header.",
+                    context.Request.Method, context.Request.Path, options.HeaderName);
                 await WriteProblemAsync(context, StatusCodes.Status400BadRequest,
                     "Idempotency-Key header is required",
                     $"This request must include a non-empty '{options.HeaderName}' header.");
@@ -56,10 +64,39 @@ public sealed class IdempotencyMiddleware
             return;
         }
 
+        if (rawKey.Length > options.MaxKeyLength)
+        {
+            logger.LogWarning("Rejected {Method} {Path}: '{Header}' length {Length} exceeds MaxKeyLength {MaxKeyLength}.",
+                context.Request.Method, context.Request.Path, options.HeaderName, rawKey.Length, options.MaxKeyLength);
+            await WriteProblemAsync(context, StatusCodes.Status400BadRequest,
+                "Idempotency-Key header is too long",
+                $"The '{options.HeaderName}' header must not exceed {options.MaxKeyLength} characters.");
+            return;
+        }
+
+        if (context.Request.ContentLength > options.MaxRequestBodyBytes)
+        {
+            logger.LogWarning(
+                "Skipping idempotency for {Method} {Path}: request body ({Length} bytes) exceeds MaxRequestBodyBytes ({Max}).",
+                context.Request.Method, context.Request.Path, context.Request.ContentLength, options.MaxRequestBodyBytes);
+            await _next(context);
+            return;
+        }
+
+        var key = httpOptionsAccessor.Value.KeyResolver(context, rawKey);
+
+        using var activity = IdempotencyActivitySource.Instance.StartActivity("idempo.reserve");
+        activity?.SetTag("idempo.key", key);
+
         var fingerprint = await ComputeFingerprintAsync(context, fingerprintProvider, cancellationToken);
 
         var reservation = await store.TryReserveAsync(
             key, fingerprint, options.PendingTimeout, options.CompletedTtl, cancellationToken);
+
+        metrics.RecordReservation(reservation.Kind);
+        activity?.SetTag("idempo.outcome", reservation.Kind.ToString());
+        logger.LogDebug("Idempotency check for key {Key} on {Method} {Path}: {Outcome}.",
+            key, context.Request.Method, context.Request.Path, reservation.Kind);
 
         switch (reservation.Kind)
         {
@@ -74,6 +111,8 @@ public sealed class IdempotencyMiddleware
                 return;
 
             case IdempotencyReservationKind.Conflict:
+                logger.LogWarning("Idempotency key '{Key}' was reused for a different request ({Method} {Path}).",
+                    key, context.Request.Method, context.Request.Path);
                 await WriteProblemAsync(context, StatusCodes.Status422UnprocessableEntity,
                     "Idempotency key reused for a different request",
                     $"Idempotency key '{key}' was already used for a request with a different method, path, or body.");
@@ -113,7 +152,25 @@ public sealed class IdempotencyMiddleware
             CreatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow + options.CompletedTtl
         };
-        await store.CompleteAsync(key, record, cancellationToken);
+
+        try
+        {
+            await store.CompleteAsync(key, record, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The handler's own work already succeeded — the caller must still get that real
+            // response below. Only *caching* the result for replay failed. The reservation is
+            // left Pending: a retry within PendingTimeout correctly sees "in progress" (409); a
+            // retry after PendingTimeout will re-run the handler, since this result was never
+            // durably recorded. Logged at Error (not just a metric) because it is exactly the
+            // failure mode idempotency exists to prevent, happening despite the safeguard.
+            metrics.RecordCompleteFailure();
+            logger.LogError(ex,
+                "Idempotency key '{Key}' ({Method} {Path}): the handler succeeded but persisting its result " +
+                "failed. Returning the real response now, but a retry after PendingTimeout may re-run the handler.",
+                key, context.Request.Method, context.Request.Path);
+        }
 
         await originalBody.WriteAsync(responseBody, cancellationToken);
     }
@@ -127,7 +184,12 @@ public sealed class IdempotencyMiddleware
         await context.Request.Body.CopyToAsync(bodyBuffer, cancellationToken);
         context.Request.Body.Position = 0;
 
-        return fingerprintProvider.Compute(context.Request.Method, context.Request.Path.Value ?? string.Empty, bodyBuffer.ToArray());
+        // Path + query string: an endpoint whose behavior depends on a query parameter (e.g.
+        // ?discount=10 vs ?discount=20) must not be treated as the same request just because the
+        // path and body happen to match.
+        var pathAndQuery = (context.Request.Path.Value ?? string.Empty) + context.Request.QueryString.Value;
+
+        return fingerprintProvider.Compute(context.Request.Method, pathAndQuery, bodyBuffer.ToArray());
     }
 
     private static async Task ReplayAsync(HttpContext context, IdempotencyRecord record)

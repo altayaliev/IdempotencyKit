@@ -15,6 +15,9 @@ public sealed class TestHost : WebApplicationFactory<TestHost>
     public int HandlerExecutionCount;
     public int FailingHandlerExecutionCount;
 
+    /// <summary>Set before first use (before <c>CreateClient()</c>) to exercise Idempo alongside response compression.</summary>
+    public bool EnableResponseCompression { get; set; }
+
     // The test assembly has no Program/Main for WebApplicationFactory's default entry-point
     // discovery to find, so the host builder is provided explicitly here instead. The base
     // class wraps this with ConfigureWebHost (below) and UseTestServer() automatically.
@@ -35,6 +38,11 @@ public sealed class TestHost : WebApplicationFactory<TestHost>
         {
             services.AddRouting();
             services.AddIdempo();
+
+            if (EnableResponseCompression)
+            {
+                services.AddResponseCompression();
+            }
         });
 
         builder.Configure(app =>
@@ -55,6 +63,14 @@ public sealed class TestHost : WebApplicationFactory<TestHost>
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 }
             });
+
+            if (EnableResponseCompression)
+            {
+                // Must run before UseIdempo() wraps the response body itself, so it wraps the
+                // *outermost* stream and compression still applies whether Idempo is flushing
+                // freshly-buffered bytes (first run) or replaying cached bytes (a retry).
+                app.UseResponseCompression();
+            }
 
             app.UseRouting();
             app.UseIdempo();

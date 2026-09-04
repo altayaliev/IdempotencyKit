@@ -1,3 +1,4 @@
+using Idempo.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -16,16 +17,19 @@ public sealed class IdempotencyCleanupService : BackgroundService
     private readonly IOptions<IdempotencyCleanupOptions> _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<IdempotencyCleanupService> _logger;
+    private readonly IdempotencyMetrics _metrics;
 
     public IdempotencyCleanupService(
         IIdempotencyStore store,
         IOptions<IdempotencyCleanupOptions> options,
         ILogger<IdempotencyCleanupService> logger,
+        IdempotencyMetrics metrics,
         TimeProvider? timeProvider = null)
     {
         _store = store;
         _options = options;
         _logger = logger;
+        _metrics = metrics;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -47,6 +51,7 @@ public sealed class IdempotencyCleanupService : BackgroundService
             try
             {
                 var purged = await _store.PurgeExpiredAsync(stoppingToken);
+                _metrics.RecordPurged(purged);
                 if (purged > 0)
                 {
                     _logger.LogDebug("Idempo cleanup purged {Count} expired record(s).", purged);

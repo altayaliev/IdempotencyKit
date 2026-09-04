@@ -1,6 +1,7 @@
 using System.Net;
 using Idempo;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Idempo.AspNetCore.Tests;
 
@@ -167,5 +168,146 @@ public class IdempotencyMiddlewareTests
 
         Assert.Equal(await first.Content.ReadAsStringAsync(), await second.Content.ReadAsStringAsync());
         Assert.Equal(3, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Key_longer_than_MaxKeyLength_is_rejected_before_reaching_the_store()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyOptions>(o => o.MaxKeyLength = 20)))
+            .CreateClient();
+
+        var content = new StringContent("{\"sku\":\"x\"}");
+        content.Headers.Add("Idempotency-Key", new string('k', 21));
+        var response = await client.PostAsync("/orders", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Key_at_or_under_MaxKeyLength_is_accepted()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyOptions>(o => o.MaxKeyLength = 20)))
+            .CreateClient();
+
+        var content = new StringContent("{\"sku\":\"x\"}");
+        content.Headers.Add("Idempotency-Key", new string('k', 20));
+        var response = await client.PostAsync("/orders", content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(1, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Same_key_and_body_but_different_query_string_is_a_conflict()
+    {
+        using var host = new TestHost();
+        using var client = host.CreateClient();
+
+        var first = new StringContent("{\"sku\":\"x\"}");
+        first.Headers.Add("Idempotency-Key", "order-query");
+        await client.PostAsync("/orders?discount=10", first);
+
+        var second = new StringContent("{\"sku\":\"x\"}");
+        second.Headers.Add("Idempotency-Key", "order-query");
+        var response = await client.PostAsync("/orders?discount=20", second);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(1, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Request_body_larger_than_MaxRequestBodyBytes_bypasses_idempotency_entirely()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyOptions>(o => o.MaxRequestBodyBytes = 10)))
+            .CreateClient();
+
+        var body = "{\"sku\":\"" + new string('x', 50) + "\"}"; // well over 10 bytes
+        var first = new StringContent(body);
+        first.Headers.Add("Idempotency-Key", "order-big-body");
+        var firstResponse = await client.PostAsync("/orders", first);
+
+        var second = new StringContent(body);
+        second.Headers.Add("Idempotency-Key", "order-big-body");
+        var secondResponse = await client.PostAsync("/orders", second);
+
+        // No idempotency protection applies once the body is over the limit — both requests
+        // reach the handler, exactly like a normal unprotected endpoint would.
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
+        Assert.Equal(2, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task KeyResolver_can_scope_the_same_raw_key_by_tenant()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyHttpOptions>(o =>
+                    o.KeyResolver = (context, rawKey) => $"{context.Request.Headers["X-Tenant"]}:{rawKey}")))
+            .CreateClient();
+
+        var tenantAContent = new StringContent("{\"sku\":\"x\"}");
+        tenantAContent.Headers.Add("Idempotency-Key", "shared-key");
+        tenantAContent.Headers.Add("X-Tenant", "tenant-a");
+        var tenantAResponse = await client.PostAsync("/orders", tenantAContent);
+
+        var tenantBContent = new StringContent("{\"sku\":\"x\"}");
+        tenantBContent.Headers.Add("Idempotency-Key", "shared-key");
+        tenantBContent.Headers.Add("X-Tenant", "tenant-b");
+        var tenantBResponse = await client.PostAsync("/orders", tenantBContent);
+
+        // Same raw Idempotency-Key, but different tenants resolve to different store keys —
+        // both execute, neither is treated as a duplicate of the other.
+        Assert.Equal(HttpStatusCode.Created, tenantAResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, tenantBResponse.StatusCode);
+        Assert.Equal(2, host.HandlerExecutionCount);
+
+        // Same tenant, same raw key, retried — still deduplicates as usual.
+        var tenantARetryContent = new StringContent("{\"sku\":\"x\"}");
+        tenantARetryContent.Headers.Add("Idempotency-Key", "shared-key");
+        tenantARetryContent.Headers.Add("X-Tenant", "tenant-a");
+        await client.PostAsync("/orders", tenantARetryContent);
+
+        Assert.Equal(2, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Handler_success_is_still_returned_to_the_caller_even_if_persisting_the_result_fails()
+    {
+        using var host = new TestHost();
+        CompleteFailingStore? failingStore = null;
+
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.Replace(ServiceDescriptor.Singleton<IIdempotencyStore>(_ =>
+                    failingStore = new CompleteFailingStore(new InMemoryIdempotencyStore())))))
+            .CreateClient();
+
+        // Prime the replacement store via one throwaway call, then arm it to fail the next Complete.
+        var primeContent = new StringContent("{\"sku\":\"prime\"}");
+        primeContent.Headers.Add("Idempotency-Key", "prime");
+        await client.PostAsync("/orders", primeContent);
+        failingStore!.FailNextComplete = true;
+
+        var content = new StringContent("{\"sku\":\"x\"}");
+        content.Headers.Add("Idempotency-Key", "order-complete-fails");
+        var response = await client.PostAsync("/orders", content);
+
+        // The handler ran and genuinely succeeded — the caller must see that real result, not a
+        // 500, even though caching it for replay failed behind the scenes.
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("orderId", body);
     }
 }

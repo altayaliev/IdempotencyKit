@@ -147,6 +147,13 @@ builder.Services.AddIdempo(options =>
 | `PendingTimeout` | 60 seconds | How long a reservation is honored while its handler is still running. Should comfortably exceed your slowest expected request. If the owning request crashes or hangs past this, the key becomes available again — protecting against a permanently stuck key, at the cost of a very slow request theoretically racing with a reclaim. Set this above your real p99 latency plus margin. |
 | `CompletedTtl` | 24 hours | How long a finished result stays available for replay before the key is fully forgotten and free for reuse. |
 | `RequireHeaderOnMutatingRequests` | `false` | When `true`, a mutating request without the header is rejected with `400 Bad Request` instead of passing through unprotected. Turn this on for endpoints where idempotency is not optional (payments, order creation). |
+| `MaxKeyLength` | 200 | The longest accepted key; a longer one is rejected with `400` before it ever reaches the store. Without this, an attacker (or a buggy client) could send unbounded numbers of huge, always-unique keys and inflate the store until the next cleanup pass — matches the column length `Idempo.EntityFrameworkCore`'s default model uses for the key. |
+| `MaxRequestBodyBytes` | 1 MiB | The largest request body the middleware will buffer to fingerprint and cache for replay. A larger request passes through **without** idempotency protection instead of buffering an unbounded body into memory — keep large-upload endpoints off `Methods`, or opt them out with `[IdempotencyIgnore]`, rather than relying on this alone. |
+
+Misconfiguration (e.g. `CompletedTtl` shorter than `PendingTimeout`, an empty
+`HeaderName`) is caught at **startup**, not as confusing runtime behavior —
+`AddIdempo()` registers validation that runs via ASP.NET Core's
+`ValidateOnStart()`.
 
 `AddIdempo()` also registers a background `IdempotencyCleanupService` that
 periodically purges expired entries — configure its interval as a second
@@ -161,6 +168,17 @@ builder.Services.AddIdempo(
 Without this, a key nobody ever retries would otherwise sit in the backend
 forever — `TryReserveAsync` only reclaims an expired entry lazily, the next
 time that *exact* key happens to be looked up again.
+
+A third delegate configures ASP.NET Core-specific hooks that need an
+`HttpContext` (kept out of `IdempotencyOptions`, which has no ASP.NET Core
+dependency) — currently just `KeyResolver`, for scoping keys, e.g. in a
+multi-tenant app where the same client-supplied key from two different
+tenants must never be treated as the same operation:
+
+```csharp
+builder.Services.AddIdempo(configureHttp: http =>
+    http.KeyResolver = (context, rawKey) => $"{context.User.FindFirst("tenant_id")?.Value}:{rawKey}");
+```
 
 ### How it works
 
@@ -195,13 +213,34 @@ distributed-lock library required**. It returns one of:
 - **`Conflict`** — the key exists but with a **different** fingerprint → `422`.
 
 The **fingerprint** (`IIdempotencyFingerprintProvider`, SHA-256 by default) is
-computed over `{method}\n{path}\n{body}`. This is what lets Idempo tell a
-legitimate replay apart from a key accidentally reused for a different request
-— it never trusts the header value alone.
+computed over `{method}\n{path+query string}\n{body}`. This is what lets
+Idempo tell a legitimate replay apart from a key accidentally reused for a
+different request — it never trusts the header value alone, and a request
+that differs only by a query parameter (`?discount=10` vs `?discount=20`) is
+correctly treated as a different request, not a replay.
 
 If your handler throws, the middleware calls `ReleaseAsync` before letting the
 exception propagate, so a legitimate retry with the same key is not blocked
 until `PendingTimeout` elapses.
+
+If the handler itself **succeeds** but persisting that result afterward fails
+(a transient store outage), the caller still gets the real, successful
+response — Idempo does not turn a working operation into a false `500` just
+because caching its result failed. That failure is logged at `Error` and
+counted on the `idempo.complete_failures` metric (see
+[Observability](#observability)) precisely because it's the one case Idempo
+can't fully protect against: the reservation stays `Pending`, so a retry
+within `PendingTimeout` still correctly gets `409`, but a retry arriving
+*after* `PendingTimeout` will re-run the handler, since the result was never
+durably recorded. This is a fundamental limit of middleware-level idempotency
+in general, not something a library can fully paper over — the metric exists
+so it's an observable, alertable event rather than a silent one.
+
+Response compression (`app.UseResponseCompression()`) works correctly with
+Idempo out of the box, verified by an integration test: place
+`UseResponseCompression()` before `UseIdempo()` (the normal recommended
+position for it, ahead of `UseRouting()` too) and both the original and every
+replayed response compress correctly.
 
 `PurgeExpiredAsync` — called periodically by `IdempotencyCleanupService`, see
 [Configuration](#configuration) — removes entries `TryReserveAsync`'s own lazy
@@ -212,6 +251,28 @@ Every type Idempo itself serializes (`IdempotencyRecord`, the header
 dictionary) goes through a source-generated `System.Text.Json` context rather
 than reflection — see `IdempoJsonContext` — so the library stays trim- and
 Native AOT-friendly.
+
+### Observability
+
+Idempo emits standard `System.Diagnostics.Metrics`/`ActivitySource` telemetry
+— no OpenTelemetry package dependency is added by Idempo itself; wire it into
+whatever OTel (or other listener) setup you already have:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m.AddMeter("Idempo"))
+    .WithTracing(t => t.AddSource("Idempo"));
+```
+
+- **Meter `"Idempo"`**: `idempo.reservations` (a counter, tagged
+  `idempo.outcome` = `reserved`/`in_progress`/`completed`/`conflict` — this is
+  how you answer "how many 409s/422s are we actually seeing in production")
+  and `idempo.cleanup.purged` (expired entries removed per cleanup pass).
+- **ActivitySource `"Idempo"`**: one `idempo.reserve` span per request that
+  reaches the store, tagged with the key and outcome.
+- **Structured logging**: `IdempotencyMiddleware` and `IdempotencyCleanupService`
+  log through the standard `ILogger` — a `Conflict` (key reused for a
+  different request) logs at `Warning`, since it usually signals a client bug.
 
 ### Storage backends
 
@@ -400,8 +461,25 @@ Coverage as of this release:
   real HTTP (normal request, retried replay, conflicting-body reuse, and 8
   genuinely concurrent duplicate requests producing exactly one order).
 
-Not yet covered — tracked as a gap, not silently assumed to work: load/soak
-testing beyond the concurrency counts exercised above.
+### Performance under load
+
+A manual load run (not part of the automated suite — it needs a running
+server, so it's a one-off measurement rather than a CI check) against the
+Release-mode sample, `InMemoryIdempotencyStore`, single machine:
+
+- **20,000 requests, each a distinct key, 400 concurrent** → ~12,500 req/s,
+  0 errors, p50/p95/p99 latency 27 / 63 / 173 ms.
+- **15,000 requests collapsing onto 300 distinct keys (50 truly concurrent
+  duplicates per key)** → exactly 300 orders created (not 15,000), every
+  replayed response byte-identical, no unexpected status code — the
+  correctness guarantee holds under real concurrent load, not just in the
+  50-caller unit test.
+
+Take this as a directional data point, not a formal benchmark: single
+machine, in-memory store only (Redis/EF Core add their own network/DB
+round-trip latency on top), and not repeated across hardware or hosting
+environments. A repeatable, automated benchmark suite (ideally per backend,
+in CI) is still on the [Roadmap](#roadmap).
 
 ### Project layout
 
@@ -421,7 +499,7 @@ samples/Idempo.Samples.MinimalApi   a runnable example
 ### Roadmap
 
 - NuGet.org publishing and CI
-- OpenTelemetry / diagnostics instrumentation
+- A repeatable, automated benchmark suite per backend (see [Performance under load](#performance-under-load) for an initial manual measurement)
 
 ### License
 
@@ -571,6 +649,13 @@ builder.Services.AddIdempo(options =>
 | `PendingTimeout` | 60 saniyə | Handler hələ icra olunarkən rezervasiyanın etibarlı sayıldığı müddət. Gözlənilən ən yavaş sorğunuzdan rahat şəkildə çox olmalıdır. Sahib sorğu çökərsə və ya bu müddəti keçərsə, key yenidən sərbəst olur — bu, key-in əbədi "yapışıb qalmasının" qarşısını alır, əvəzində nəzəri olaraq çox yavaş bir sorğu bərpa ilə üst-üstə düşə bilər. Bunu real p99 latency-nizdən yuxarı, ehtiyat payı ilə seçin. |
 | `CompletedTtl` | 24 saat | Bitmiş nəticənin replay üçün nə qədər müddət əlçatan qalacağı — bundan sonra key tamamilə unudulur və yenidən istifadəyə açıq olur. |
 | `RequireHeaderOnMutatingRequests` | `false` | `true` olduqda, header olmadan gələn dəyişdirici sorğu qorunmadan keçmək əvəzinə `400 Bad Request` ilə rədd edilir. İdempotentliyin məcburi olduğu endpoint-lər üçün (ödənişlər, sifariş yaratma) bunu aktivləşdirin. |
+| `MaxKeyLength` | 200 | Qəbul edilən ən uzun key — daha uzunu store-a çatmadan `400` ilə rədd edilir. Bu olmasa, kimsə (və ya səhv client) minlərlə, həmişə unikal, çox uzun key göndərib növbəti cleanup keçidinə qədər store-u doldura bilər — `Idempo.EntityFrameworkCore`-un default modelinin key sütunu uzunluğu ilə üst-üstə düşür. |
+| `MaxRequestBodyBytes` | 1 MiB | Middleware-in fingerprint hesablamaq və replay üçün yaddaşa yığacağı ən böyük request body. Bundan böyük sorğu idempotentlik qorunması **olmadan** keçir — böyük body-li unbounded yaddaşa yığılmır. Böyük fayl-yükləmə endpoint-lərini `Methods`-dan çıxarın, ya da `[IdempotencyIgnore]` ilə istisna edin, təkcə bu limitə güvənməyin. |
+
+Səhv konfiqurasiya (məs. `PendingTimeout`-dan qısa `CompletedTtl`, boş
+`HeaderName`) **startup**-da tutulur, qarışıq runtime davranışı kimi yox —
+`AddIdempo()` ASP.NET Core-un `ValidateOnStart()` mexanizmi ilə işləyən
+validasiya qeydiyyatdan keçirir.
 
 `AddIdempo()` həmçinin vaxtı keçmiş qeydləri periodik təmizləyən background
 `IdempotencyCleanupService`-i qeydiyyatdan keçirir — intervalını ikinci
@@ -585,6 +670,17 @@ builder.Services.AddIdempo(
 Bu olmasa, heç kimin təkrar sorğu göndərmədiyi bir key backend-də əbədi
 qalardı — `TryReserveAsync` vaxtı keçmiş qeydi yalnız *məhz həmin* key yenidən
 axtarılanda lazy şəkildə bərpa edir.
+
+Üçüncü delegate `HttpContext` tələb edən ASP.NET Core-a xas hook-ları
+konfiqurasiya edir (bunlar `IdempotencyOptions`-dan kənar saxlanılır, çünki o,
+ASP.NET Core asılılığı daşımır) — hazırda yalnız `KeyResolver`, key-ləri
+scope etmək üçün, məs. multi-tenant tətbiqdə eyni client-verilmiş key iki
+fərqli tenant-dan gəlsə eyni əməliyyat sayılmamalıdır:
+
+```csharp
+builder.Services.AddIdempo(configureHttp: http =>
+    http.KeyResolver = (context, rawKey) => $"{context.User.FindFirst("tenant_id")?.Value}:{rawKey}");
+```
 
 ### Necə işləyir
 
@@ -621,13 +717,35 @@ distributed-lock kitabxanası tələb olunmur**. Aşağıdakılardan birini qayt
 - **`Conflict`** — key mövcuddur, amma **fərqli** fingerprint ilə → `422`.
 
 **Fingerprint** (`IIdempotencyFingerprintProvider`, default SHA-256)
-`{method}\n{path}\n{body}` üzərində hesablanır. Bu, Idempo-ya həqiqi replay-i
-key-in səhvən fərqli sorğu üçün təkrar istifadə olunmasından ayırd etməyə
-imkan verir — heç vaxt yalnız header dəyərinə güvənmir.
+`{method}\n{path+query string}\n{body}` üzərində hesablanır. Bu, Idempo-ya
+həqiqi replay-i key-in səhvən fərqli sorğu üçün təkrar istifadə
+olunmasından ayırd etməyə imkan verir — heç vaxt yalnız header dəyərinə
+güvənmir, və yalnız query parametri ilə fərqlənən sorğu (`?discount=10` vs
+`?discount=20`) düzgün şəkildə fərqli sorğu sayılır, replay yox.
 
 Handler-iniz istisna atarsa, middleware istisnanı buraxmadan əvvəl
 `ReleaseAsync` çağırır — beləliklə eyni key ilə edilən legitim təkrar cəhd
 `PendingTimeout` keçənə qədər bloklanmır.
+
+Handler-in özü **uğurlu olsa**, amma nəticəni sonradan saxlamaq uğursuz olsa
+(store-un keçici kəsilməsi), çağıran yenə də real, uğurlu cavabı alır —
+Idempo işləyən əməliyyatı, sadəcə nəticəni cache-ləmək uğursuz oldu deyə,
+yalançı `500`-ə çevirmir. Bu, `Error` səviyyəsində log olunur və
+`idempo.complete_failures` metrikasında sayılır (bax:
+[Müşahidəedilənlik](#müşahidəedilənlik-observability)) — məhz çünki bu, Idempo-nun
+tam qoruya bilmədiyi tək haldır: rezervasiya `Pending` olaraq qalır, ona görə
+`PendingTimeout` daxilində retry düzgün `409` alır, amma `PendingTimeout`-dan
+**sonra** gələn retry handler-i yenidən icra edəcək, çünki nəticə heç vaxt
+davamlı şəkildə qeydə alınmayıb. Bu, ümumiyyətlə middleware-səviyyəli
+idempotentliyin fundamental məhdudiyyətidir, kitabxananın tam örtə biləcəyi
+bir şey deyil — metrika elə buna görə var ki, bu, sükutlu deyil, müşahidə
+edilə bilən/alert qoyula bilən hadisə olsun.
+
+Response compression (`app.UseResponseCompression()`) Idempo ilə qutudan
+çıxan kimi düzgün işləyir, integration test ilə təsdiqlənib:
+`UseResponseCompression()`-u `UseIdempo()`-dan əvvəl yerləşdirin (onun normal
+tövsiyə olunan mövqeyi, `UseRouting()`-dən də əvvəl) — həm orijinal, həm də
+hər replay edilən cavab düzgün sıxılır.
 
 `PurgeExpiredAsync` — `IdempotencyCleanupService` tərəfindən periodik
 çağırılır (bax: [Konfiqurasiya](#konfiqurasiya)) — `TryReserveAsync`-in öz lazy
@@ -639,6 +757,29 @@ Idempo-nun özünün serializasiya etdiyi hər tip (`IdempotencyRecord`, header
 dictionary-si) reflection əvəzinə source-generated `System.Text.Json`
 context-dən keçir — bax: `IdempoJsonContext` — bu, kitabxananı trim- və
 Native AOT-uyğun saxlayır.
+
+### Müşahidəedilənlik (Observability)
+
+Idempo standart `System.Diagnostics.Metrics`/`ActivitySource` telemetriyasını
+yayımlayır — Idempo özü heç bir OpenTelemetry paket asılılığı əlavə etmir;
+artıq sahib olduğunuz OTel (və ya başqa listener) qurulumuna qoşun:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m.AddMeter("Idempo"))
+    .WithTracing(t => t.AddSource("Idempo"));
+```
+
+- **Meter `"Idempo"`**: `idempo.reservations` (counter, `idempo.outcome` teqi
+  ilə = `reserved`/`in_progress`/`completed`/`conflict` — bu, "production-da
+  faktiki neçə 409/422 görürük" sualına cavab verməyin yoludur) və
+  `idempo.cleanup.purged` (hər cleanup keçidində silinən vaxtı keçmiş qeydlər).
+- **ActivitySource `"Idempo"`**: store-a çatan hər sorğu üçün key və outcome
+  teqli bir `idempo.reserve` span-ı.
+- **Strukturlaşdırılmış logging**: `IdempotencyMiddleware` və
+  `IdempotencyCleanupService` standart `ILogger` vasitəsilə log yazır —
+  `Conflict` (key fərqli sorğu üçün təkrar istifadə olunub) `Warning`
+  səviyyəsində log olunur, çünki bu adətən client-in səhvini göstərir.
 
 ### Saxlama backend-ləri
 
@@ -828,8 +969,25 @@ Bu buraxılışa olan əhatə:
   yoxlanılıb (normal sorğu, retry-replay, ziddiyyətli body ilə təkrar istifadə,
   və həqiqətən paralel 8 dublikat sorğunun dəqiq bir sifariş yaratması).
 
-Hələ əhatə olunmayan — sükutla "işləyir" fərz edilmədən, boşluq kimi qeyd
-olunur: yuxarıdakı paralellik ədədlərindən kənar yük/soak testi.
+### Yük altında performans
+
+Əl ilə aparılmış bir load test (avtomatik test dəstinin hissəsi deyil — işə
+salınmış server tələb etdiyi üçün CI yoxlaması deyil, birdəfəlik ölçmədir),
+Release rejimindəki sample-a qarşı, `InMemoryIdempotencyStore`, tək maşın:
+
+- **20,000 sorğu, hər biri fərqli key, 400 paralel** → ~12,500 req/s, 0 xəta,
+  p50/p95/p99 latency 27 / 63 / 173 ms.
+- **300 fərqli key üzərinə düşən 15,000 sorğu (hər key üçün 50 həqiqətən
+  paralel dublikat)** → dəqiq 300 sifariş yaradıldı (15,000 yox), hər replay
+  edilmiş cavab bayt-bayta eyni, gözlənilməz status kodu yox — korrektlik
+  zəmanəti real paralel yük altında da qüvvədədir, təkcə 50-çağıranlı unit
+  testdə yox.
+
+Bunu rəsmi benchmark kimi yox, istiqamətverici məlumat nöqtəsi kimi qəbul
+edin: tək maşın, yalnız in-memory store (Redis/EF Core öz şəbəkə/DB
+round-trip latency-sini üstünə əlavə edir), müxtəlif hardware/hosting
+mühitlərində təkrarlanmayıb. Təkrarlanan, avtomatlaşdırılmış benchmark dəsti
+(hər backend üçün, ideal halda CI-də) hələ [Yol xəritəsi](#yol-xəritəsi)ndədir.
 
 ### Layihə strukturu
 
@@ -849,7 +1007,7 @@ samples/Idempo.Samples.MinimalApi   işə salına bilən nümunə
 ### Yol xəritəsi
 
 - NuGet.org-a publish və CI
-- OpenTelemetry / diagnostics inteqrasiyası
+- Hər backend üçün təkrarlanan, avtomatlaşdırılmış benchmark dəsti (bax: [Yük altında performans](#yük-altında-performans) — ilkin əl ilə ölçmə üçün)
 
 ### Lisenziya
 
