@@ -1,0 +1,8 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <Description>Zero-config idempotency for .NET APIs — automatically deduplicates retried requests using an Idempotency-Key header, without per-endpoint code.</Description>
+  </PropertyGroup>
+
+</Project>

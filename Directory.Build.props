@@ -1,0 +1,19 @@
+<Project>
+
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Deterministic>true</Deterministic>
+
+    <Authors>Alief Altay</Authors>
+    <Product>Idempo</Product>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>idempotency;idempotent;aspnetcore;api;http</PackageTags>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  </PropertyGroup>
+
+</Project>
