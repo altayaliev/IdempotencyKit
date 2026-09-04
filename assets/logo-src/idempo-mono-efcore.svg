@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="0" y="0" width="512" height="512" fill="#FFFFFF"/>
+
+  <!-- "i" : dot + bar -->
+  <circle cx="150" cy="128" r="21" fill="#1B5E3A"/>
+  <rect x="131" y="163" width="38" height="237" fill="#1B5E3A"/>
+
+  <!-- "D" stem -->
+  <rect x="204" y="106" width="42" height="294" fill="#1B5E3A"/>
+
+  <!-- "D" bowl, tapering into a shield point below the stem -->
+  <path d="M 246,106
+           C 330,106 368,158 368,224
+           C 368,296 332,344 296,378
+           L 286,470
+           L 232,378
+           C 214,350 204,316 204,290
+           L 204,106
+           Z" fill="#1B5E3A"/>
+
+  <!-- Inner icon: database cylinder, contrasting accent color for the EF Core variant -->
+  <rect x="256" y="228" width="60" height="40" fill="#2F6FBF"/>
+  <ellipse cx="286" cy="228" rx="30" ry="11" fill="#3E82D6"/>
+  <path d="M 256,268 A 30 11 0 0 0 316,268 L 316,257 A 30 11 0 0 1 256,257 Z" fill="#255A99"/>
+
+  <!-- Small, secondary wordmark -->
+  <text x="256" y="462" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="400" font-size="22" letter-spacing="5" fill="#1B5E3A">IDEMPO</text>
+</svg>

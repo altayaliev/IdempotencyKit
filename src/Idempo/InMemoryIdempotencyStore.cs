@@ -86,6 +86,22 @@ public sealed class InMemoryIdempotencyStore : IIdempotencyStore
         return Task.CompletedTask;
     }
 
+    public Task<int> PurgeExpiredAsync(CancellationToken cancellationToken = default)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var removed = 0;
+
+        foreach (var entry in _records)
+        {
+            if (entry.Value.ExpiresAt <= now && _records.TryRemove(entry))
+            {
+                removed++;
+            }
+        }
+
+        return Task.FromResult(removed);
+    }
+
     private static IdempotencyRecord NewPendingRecord(string key, string fingerprintHash, DateTimeOffset now, TimeSpan pendingTimeout) =>
         new()
         {

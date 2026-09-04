@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="0" y="0" width="512" height="512" fill="#FFFFFF"/>
+  <defs>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#12ADA0"/>
+      <stop offset="65%" stop-color="#0E8C82"/>
+      <stop offset="65.01%" stop-color="#C43D3D"/>
+      <stop offset="100%" stop-color="#A32E2E"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#12ADA0"/>
+      <stop offset="100%" stop-color="#C43D3D"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shield -->
+  <path d="M 176,88 L 336,88 L 336,190 C 336,252 304,288 256,322 C 208,288 176,252 176,190 Z"
+        fill="url(#shieldGrad)"/>
+
+  <!-- Inner icon: retry-loop converging into a single checkmark (the "exactly once" idea) -->
+  <path d="M 306,188 A 58 58 0 1 1 256,132" fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" opacity="0.95"/>
+  <polygon points="271,132 256,141 256,123" fill="#FFFFFF" opacity="0.95"/>
+  <polyline points="228,192 249,213 288,170" fill="none" stroke="#FFFFFF" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Wordmark -->
+  <text x="256" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="58" letter-spacing="4" fill="#1A1A1A">IDEMPO</text>
+
+  <!-- Divider -->
+  <rect x="146" y="402" width="220" height="4" fill="url(#lineGrad)"/>
+
+  <!-- Tagline (two lines so it stays inside the square at a readable size) -->
+  <text x="256" y="426" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="15" letter-spacing="1.5" fill="#6B7280">CORE IDEMPOTENCY</text>
+  <text x="256" y="446" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="15" letter-spacing="1.5" fill="#6B7280">ABSTRACTIONS FOR .NET</text>
+</svg>

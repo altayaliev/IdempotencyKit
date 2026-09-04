@@ -8,12 +8,29 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
 
-    <Authors>Alief Altay</Authors>
+    <Authors>Altay Aliyev</Authors>
     <Product>Idempo</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>idempotency;idempotent;aspnetcore;api;http</PackageTags>
     <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/altayaliev/Idempo.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/altayaliev/Idempo</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+    <!-- Each packable project under src/ carries its own README.md, embedded into its .nupkg
+         and shown on its own NuGet.org page. Test/sample projects have none, so this no-ops there. -->
+    <PackageReadmeFile Condition="Exists('README.md')">README.md</PackageReadmeFile>
+
+    <!-- Same for icon.png — each package's own logo, shown next to its NuGet.org listing. -->
+    <PackageIcon Condition="Exists('icon.png')">icon.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup Condition="Exists('README.md')">
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('icon.png')">
+    <None Include="icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

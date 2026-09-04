@@ -4,10 +4,15 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Idempo.AspNetCore/Idempo.AspNetCore.csproj" />
+    <Project Path="src/Idempo.EntityFrameworkCore/Idempo.EntityFrameworkCore.csproj" />
+    <Project Path="src/Idempo.StackExchangeRedis/Idempo.StackExchangeRedis.csproj" />
     <Project Path="src/Idempo/Idempo.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Idempo.AspNetCore.Tests/Idempo.AspNetCore.Tests.csproj" />
+    <Project Path="tests/Idempo.EntityFrameworkCore.Tests/Idempo.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="tests/Idempo.StackExchangeRedis.Tests/Idempo.StackExchangeRedis.Tests.csproj" />
+    <Project Path="tests/Idempo.TestKit/Idempo.TestKit.csproj" />
     <Project Path="tests/Idempo.Tests/Idempo.Tests.csproj" />
   </Folder>
 </Solution>

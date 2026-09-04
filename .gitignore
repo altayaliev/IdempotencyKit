@@ -480,3 +480,9 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Claude Code local state
+.claude/
+
+# Throwaway scratch tools (e.g. one-off asset generation scripts)
+/scratch*/

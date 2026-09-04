@@ -1,4 +1,6 @@
 using System.Net;
+using Idempo;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Idempo.AspNetCore.Tests;
 
@@ -91,5 +93,79 @@ public class IdempotencyMiddlewareTests
         await client.PostAsync("/orders", new StringContent("{\"sku\":\"no-key\"}"));
 
         Assert.Equal(2, host.HandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Handler_exception_releases_the_key_so_a_retry_can_execute_again()
+    {
+        using var host = new TestHost();
+        using var client = host.CreateClient();
+
+        var first = new StringContent("{}");
+        first.Headers.Add("Idempotency-Key", "order-failing");
+        var firstResponse = await client.PostAsync("/failing", first);
+
+        var second = new StringContent("{}");
+        second.Headers.Add("Idempotency-Key", "order-failing");
+        var secondResponse = await client.PostAsync("/failing", second);
+
+        // Both attempts fail (the handler always throws in this test), but the important
+        // guarantee is that the reservation was released after the first failure: the second
+        // request must reach the handler again rather than being stuck as "in progress" forever.
+        Assert.Equal(HttpStatusCode.InternalServerError, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.InternalServerError, secondResponse.StatusCode);
+        Assert.Equal(2, host.FailingHandlerExecutionCount);
+    }
+
+    [Fact]
+    public async Task Missing_header_is_rejected_when_required()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyOptions>(o => o.RequireHeaderOnMutatingRequests = true)))
+            .CreateClient();
+
+        var withoutKey = await client.PostAsync("/orders", new StringContent("{\"sku\":\"x\"}"));
+
+        var withKeyContent = new StringContent("{\"sku\":\"x\"}");
+        withKeyContent.Headers.Add("Idempotency-Key", "order-required");
+        var withKey = await client.PostAsync("/orders", withKeyContent);
+
+        Assert.Equal(HttpStatusCode.BadRequest, withoutKey.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, withKey.StatusCode);
+    }
+
+    [Fact]
+    public async Task Custom_header_name_is_honored_instead_of_the_default()
+    {
+        using var host = new TestHost();
+        using var client = host.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+                services.PostConfigure<IdempotencyOptions>(o => o.HeaderName = "X-My-Idempotency-Key")))
+            .CreateClient();
+
+        // The default header name is now ignored, so two "duplicate" requests using it both execute.
+        var defaultHeaderFirst = new StringContent("{\"sku\":\"default-header\"}");
+        defaultHeaderFirst.Headers.Add("Idempotency-Key", "ignored-key");
+        await client.PostAsync("/orders", defaultHeaderFirst);
+
+        var defaultHeaderSecond = new StringContent("{\"sku\":\"default-header\"}");
+        defaultHeaderSecond.Headers.Add("Idempotency-Key", "ignored-key");
+        await client.PostAsync("/orders", defaultHeaderSecond);
+
+        Assert.Equal(2, host.HandlerExecutionCount);
+
+        // The configured custom header is honored and deduplicates as usual.
+        var customHeaderFirst = new StringContent("{\"sku\":\"custom-header\"}");
+        customHeaderFirst.Headers.Add("X-My-Idempotency-Key", "custom-key");
+        var first = await client.PostAsync("/orders", customHeaderFirst);
+
+        var customHeaderSecond = new StringContent("{\"sku\":\"custom-header\"}");
+        customHeaderSecond.Headers.Add("X-My-Idempotency-Key", "custom-key");
+        var second = await client.PostAsync("/orders", customHeaderSecond);
+
+        Assert.Equal(await first.Content.ReadAsStringAsync(), await second.Content.ReadAsStringAsync());
+        Assert.Equal(3, host.HandlerExecutionCount);
     }
 }

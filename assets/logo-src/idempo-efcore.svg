@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="0" y="0" width="512" height="512" fill="#FFFFFF"/>
+  <defs>
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4B3F72"/>
+      <stop offset="100%" stop-color="#6C5CE7"/>
+    </linearGradient>
+  </defs>
+  <rect x="56" y="56" width="400" height="400" rx="90" fill="url(#badgeGrad)"/>
+  <path d="M 386 256 A 130 130 0 1 1 256 126" fill="none" stroke="#E8E4FF" stroke-width="26" stroke-linecap="round"/>
+  <polygon points="278,126 250,142 250,110" fill="#E8E4FF"/>
+  <polyline points="204,262 238,296 312,214" fill="none" stroke="#00E5D4" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- EF Core accent: a small database cylinder badge, bottom-right -->
+  <circle cx="393" cy="375" r="50" fill="#FFFFFF"/>
+  <rect x="365" y="358" width="56" height="34" fill="#2FBF9F"/>
+  <ellipse cx="393" cy="358" rx="28" ry="11" fill="#39D6B4"/>
+  <ellipse cx="393" cy="392" rx="28" ry="11" fill="#26A084"/>
+</svg>

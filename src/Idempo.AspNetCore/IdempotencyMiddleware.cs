@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
@@ -156,12 +157,16 @@ public sealed class IdempotencyMiddleware
     {
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/problem+json";
-        await JsonSerializer.SerializeAsync(context.Response.Body, new
-        {
-            type = $"https://httpstatuses.io/{statusCode}",
-            title,
-            status = statusCode,
-            detail
-        }, cancellationToken: context.RequestAborted);
+        var payload = new ProblemDetailsPayload($"https://httpstatuses.io/{statusCode}", title, statusCode, detail);
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body, payload, MiddlewareJsonContext.Default.ProblemDetailsPayload, context.RequestAborted);
     }
+}
+
+internal sealed record ProblemDetailsPayload(string Type, string Title, int Status, string Detail);
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(ProblemDetailsPayload))]
+internal sealed partial class MiddlewareJsonContext : JsonSerializerContext
+{
 }

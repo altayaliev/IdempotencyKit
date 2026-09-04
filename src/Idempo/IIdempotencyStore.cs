@@ -60,4 +60,14 @@ public interface IIdempotencyStore
     /// until <c>pendingTimeout</c> elapses.
     /// </summary>
     Task ReleaseAsync(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Proactively removes entries that have already expired, so a key nobody ever retries
+    /// doesn't sit in the backend forever. <see cref="TryReserveAsync"/> already reclaims an
+    /// expired entry lazily the next time its exact key is looked up — this exists for entries
+    /// nobody looks up again, which lazy reclaim alone would never touch. Called periodically by
+    /// <see cref="IdempotencyCleanupService"/>; backends with native expiry (e.g. Redis TTL) can
+    /// implement this as a no-op returning 0. Returns the number of entries removed.
+    /// </summary>
+    Task<int> PurgeExpiredAsync(CancellationToken cancellationToken = default);
 }
