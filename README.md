@@ -1,5 +1,9 @@
 # IdempotencyKit
 
+[![CI](https://github.com/altayaliev/IdempotencyKit/actions/workflows/ci.yml/badge.svg)](https://github.com/altayaliev/IdempotencyKit/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/IdempotencyKit.svg)](https://www.nuget.org/packages/IdempotencyKit)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Zero-config idempotency for .NET APIs. Register one middleware, and any mutating
 request (`POST`/`PUT`/`PATCH`/`DELETE`) carrying an `Idempotency-Key` header is
 executed once — retries, double-clicks, and network-triggered resends replay the
@@ -526,7 +530,6 @@ samples/IdempotencyKit.Samples.MinimalApi   a runnable example
 
 ### Roadmap
 
-- NuGet.org publishing and CI
 - A repeatable, automated benchmark suite per backend (see [Performance under load](#performance-under-load) for an initial manual measurement)
 
 ### License
@@ -1063,7 +1066,6 @@ samples/IdempotencyKit.Samples.MinimalApi   işə salına bilən nümunə
 
 ### Yol xəritəsi
 
-- NuGet.org-a publish və CI
 - Hər backend üçün təkrarlanan, avtomatlaşdırılmış benchmark dəsti (bax: [Yük altında performans](#yük-altında-performans) — ilkin əl ilə ölçmə üçün)
 
 ### Lisenziya
