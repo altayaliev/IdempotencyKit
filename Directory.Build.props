@@ -10,6 +10,7 @@
 
     <Authors>Altay Aliyev</Authors>
     <Product>IdempotencyKit</Product>
+    <Version>1.0.0</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>idempotency;idempotent;aspnetcore;api;http</PackageTags>
     <RepositoryType>git</RepositoryType>

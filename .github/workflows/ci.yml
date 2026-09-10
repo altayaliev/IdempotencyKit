@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore IdempotencyKit.slnx
+
+      - name: Build
+        run: dotnet build IdempotencyKit.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test IdempotencyKit.slnx --configuration Release --no-build --verbosity normal
+
+      - name: Pack (validates packaging, not published here)
+        run: |
+          dotnet pack src/IdempotencyKit/IdempotencyKit.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.AspNetCore/IdempotencyKit.AspNetCore.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.EntityFrameworkCore/IdempotencyKit.EntityFrameworkCore.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.StackExchangeRedis/IdempotencyKit.StackExchangeRedis.csproj --configuration Release --no-build -o ./nupkgs
+
+      - name: Upload packages as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: ./nupkgs/*.nupkg

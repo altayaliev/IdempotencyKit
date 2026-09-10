@@ -1,0 +1,51 @@
+name: Publish to NuGet
+
+# Triggered by pushing a tag like "v1.0.0" — bump <Version> in
+# Directory.Build.props first, commit, then tag that commit and push the tag.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required so this job can request a GitHub OIDC token for NuGet Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore IdempotencyKit.slnx
+
+      - name: Build
+        run: dotnet build IdempotencyKit.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test IdempotencyKit.slnx --configuration Release --no-build --filter "FullyQualifiedName!~StackExchangeRedis"
+
+      - name: Pack
+        run: |
+          dotnet pack src/IdempotencyKit/IdempotencyKit.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.AspNetCore/IdempotencyKit.AspNetCore.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.EntityFrameworkCore/IdempotencyKit.EntityFrameworkCore.csproj --configuration Release --no-build -o ./nupkgs
+          dotnet pack src/IdempotencyKit.StackExchangeRedis/IdempotencyKit.StackExchangeRedis.csproj --configuration Release --no-build -o ./nupkgs
+
+      # Trusted Publishing (OIDC) — exchanges a short-lived GitHub token for a temporary
+      # NuGet.org API key, so no long-lived secret needs to be stored in this repo.
+      - name: NuGet login (OIDC -> temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: altay.aliyev # nuget.org profile name, matches the Trusted Publishing policy's Package Owner
+
+      - name: Push to NuGet.org
+        run: dotnet nuget push "./nupkgs/*.nupkg" --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
