@@ -9,12 +9,12 @@
     <Deterministic>true</Deterministic>
 
     <Authors>Altay Aliyev</Authors>
-    <Product>Idempo</Product>
+    <Product>IdempotencyKit</Product>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>idempotency;idempotent;aspnetcore;api;http</PackageTags>
     <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/altayaliev/Idempo.git</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/altayaliev/Idempo</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/altayaliev/IdempotencyKit.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/altayaliev/IdempotencyKit</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
 
     <!-- Each packable project under src/ carries its own README.md, embedded into its .nupkg

@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/IdempotencyKit.Samples.MinimalApi/IdempotencyKit.Samples.MinimalApi.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/IdempotencyKit.AspNetCore/IdempotencyKit.AspNetCore.csproj" />
+    <Project Path="src/IdempotencyKit.EntityFrameworkCore/IdempotencyKit.EntityFrameworkCore.csproj" />
+    <Project Path="src/IdempotencyKit.StackExchangeRedis/IdempotencyKit.StackExchangeRedis.csproj" />
+    <Project Path="src/IdempotencyKit/IdempotencyKit.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IdempotencyKit.AspNetCore.Tests/IdempotencyKit.AspNetCore.Tests.csproj" />
+    <Project Path="tests/IdempotencyKit.EntityFrameworkCore.Tests/IdempotencyKit.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="tests/IdempotencyKit.StackExchangeRedis.Tests/IdempotencyKit.StackExchangeRedis.Tests.csproj" />
+    <Project Path="tests/IdempotencyKit.TestKit/IdempotencyKit.TestKit.csproj" />
+    <Project Path="tests/IdempotencyKit.Tests/IdempotencyKit.Tests.csproj" />
+  </Folder>
+</Solution>

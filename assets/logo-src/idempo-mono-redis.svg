@@ -22,5 +22,5 @@
   <polygon points="286,196 326,248 286,300 246,248" fill="#B23333"/>
 
   <!-- Small, secondary wordmark -->
-  <text x="256" y="462" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="400" font-size="22" letter-spacing="5" fill="#1B5E3A">IDEMPO</text>
+  <text x="256" y="462" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="400" font-size="22" letter-spacing="5" fill="#1B5E3A">IDEMPOTENCYKIT</text>
 </svg>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <!-- A shared library of abstract test-base classes, not a runnable test project itself:
+         its [Fact] methods only execute via the concrete classes that derive from them in each
+         store's own test project. Without this, `dotnet test` on the whole solution tries to
+         launch this assembly directly and fails (no Microsoft.NET.Test.Sdk / full test host). -->
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\IdempotencyKit\IdempotencyKit.csproj" />
+  </ItemGroup>
+
+</Project>

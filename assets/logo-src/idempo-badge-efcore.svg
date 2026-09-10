@@ -24,7 +24,7 @@
   <ellipse cx="256" cy="187" rx="42" ry="14" fill="none" stroke="#0E8C82" stroke-width="3" opacity="0.6"/>
 
   <!-- Wordmark -->
-  <text x="256" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="58" letter-spacing="4" fill="#1A1A1A">IDEMPO</text>
+  <text x="256" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="58" letter-spacing="4" fill="#1A1A1A">IDEMPOTENCYKIT</text>
 
   <!-- Divider -->
   <rect x="146" y="402" width="220" height="4" fill="url(#lineGrad)"/>

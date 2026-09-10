@@ -22,7 +22,7 @@
   <polygon points="256,152 284,187 256,222 228,187" fill="#0E8C82" opacity="0.55"/>
 
   <!-- Wordmark -->
-  <text x="256" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="58" letter-spacing="4" fill="#1A1A1A">IDEMPO</text>
+  <text x="256" y="384" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="58" letter-spacing="4" fill="#1A1A1A">IDEMPOTENCYKIT</text>
 
   <!-- Divider -->
   <rect x="146" y="402" width="220" height="4" fill="url(#lineGrad)"/>
