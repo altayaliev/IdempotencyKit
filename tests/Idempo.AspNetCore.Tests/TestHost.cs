@@ -86,6 +86,22 @@ public sealed class TestHost : WebApplicationFactory<TestHost>
 
                 endpoints.MapPost("/pings", () => "pong").WithMetadata(new IdempotencyIgnoreAttribute());
 
+                endpoints.MapPost("/strict-orders", async context =>
+                {
+                    Interlocked.Increment(ref HandlerExecutionCount);
+                    context.Response.StatusCode = StatusCodes.Status201Created;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync($"{{\"orderId\":{HandlerExecutionCount}}}");
+                }).WithIdempotencyOptions(requireHeaderOnMutatingRequests: true);
+
+                endpoints.MapPost("/small-body-orders", async context =>
+                {
+                    Interlocked.Increment(ref HandlerExecutionCount);
+                    context.Response.StatusCode = StatusCodes.Status201Created;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync($"{{\"orderId\":{HandlerExecutionCount}}}");
+                }).WithIdempotencyOptions(maxRequestBodyBytes: 10);
+
                 endpoints.MapPost("/failing", context =>
                 {
                     Interlocked.Increment(ref FailingHandlerExecutionCount);

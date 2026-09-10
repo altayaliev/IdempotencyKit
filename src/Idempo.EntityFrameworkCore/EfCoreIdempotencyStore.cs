@@ -117,24 +117,71 @@ public sealed class EfCoreIdempotencyStore<TContext> : IIdempotencyStore
             .ExecuteDeleteAsync(cancellationToken);
     }
 
+    /// <summary>Rows read and deleted per round trip. Bounds memory use on a large backlog of expired rows.</summary>
+    private const int PurgeBatchSize = 500;
+
     public async Task<int> PurgeExpiredAsync(CancellationToken cancellationToken = default)
     {
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var nowUnixMs = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-
-        // Tracked (not AsNoTracking), then removed one at a time via SaveChangesAsync rather than
-        // a single ExecuteDeleteAsync(Key IN (...)): a blind bulk delete-by-key could wipe out a
-        // brand new, non-expired reservation that a legitimate request creates for the same key
-        // between this method's read and its delete. Going through the ExpiresAtUnixMs
-        // concurrency token (see ConfigureIdempotencyStore) makes each row's delete a no-op if it
-        // changed since we read it, at the cost of one round trip per expired row — an acceptable
-        // trade-off for a periodic maintenance pass rather than a request-path operation.
-        var expired = await context.Set<IdempotencyRecordEntity>()
-            .Where(r => r.ExpiresAtUnixMs <= nowUnixMs)
-            .ToListAsync(cancellationToken);
-
         var removed = 0;
-        foreach (var entity in expired)
+
+        while (true)
+        {
+            List<IdempotencyRecordEntity> page;
+
+            // AsNoTracking: this page is read from its own short-lived context, then attached to
+            // a separate context below purely to be deleted — no update tracking is needed for it.
+            await using (var readContext = await _contextFactory.CreateDbContextAsync(cancellationToken))
+            {
+                page = await readContext.Set<IdempotencyRecordEntity>()
+                    .Where(r => r.ExpiresAtUnixMs <= nowUnixMs)
+                    .OrderBy(r => r.Key)
+                    .Take(PurgeBatchSize)
+                    .AsNoTracking()
+                    .ToListAsync(cancellationToken);
+            }
+
+            if (page.Count == 0)
+            {
+                return removed;
+            }
+
+            await using (var deleteContext = await _contextFactory.CreateDbContextAsync(cancellationToken))
+            {
+                deleteContext.RemoveRange(page);
+
+                try
+                {
+                    // One round trip removes the whole page in the common case where nothing in
+                    // it was concurrently reclaimed since the read above.
+                    await deleteContext.SaveChangesAsync(cancellationToken);
+                    removed += page.Count;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // SaveChangesAsync runs the page in one transaction, so a single row reclaimed
+                    // by a concurrent TryReserveAsync since the read above rolls the whole batch
+                    // back. Fall back to removing this page one row at a time — via the same
+                    // ExpiresAtUnixMs concurrency-token check — so that one conflicting row
+                    // doesn't block the rest of it.
+                    removed += await RemovePageIndividuallyAsync(page, cancellationToken);
+                }
+            }
+
+            if (page.Count < PurgeBatchSize)
+            {
+                return removed;
+            }
+        }
+    }
+
+    private async Task<int> RemovePageIndividuallyAsync(
+        List<IdempotencyRecordEntity> page, CancellationToken cancellationToken)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var removed = 0;
+
+        foreach (var entity in page)
         {
             context.Remove(entity);
 

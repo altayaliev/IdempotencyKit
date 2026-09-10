@@ -180,6 +180,28 @@ builder.Services.AddIdempo(configureHttp: http =>
     http.KeyResolver = (context, rawKey) => $"{context.User.FindFirst("tenant_id")?.Value}:{rawKey}");
 ```
 
+### Per-endpoint overrides
+
+Every option above applies app-wide by default. A single endpoint (or, on a
+controller, every one of its actions) can override `PendingTimeout`,
+`CompletedTtl`, `RequireHeaderOnMutatingRequests`, and `MaxRequestBodyBytes`
+without touching the rest of the app — useful when one endpoint (e.g.
+payments) needs stricter or longer-lived behavior than the rest:
+
+```csharp
+// Minimal API
+app.MapPost("/payments", Handler)
+    .WithIdempotencyOptions(
+        requireHeaderOnMutatingRequests: true,
+        completedTtl: TimeSpan.FromDays(7));
+
+// MVC controller action
+[IdempotencyOptions(RequireHeaderOnMutatingRequests = true, CompletedTtlSeconds = 604_800)]
+public IActionResult CreatePayment(...) { ... }
+```
+
+Any property left unset falls back to the app-wide `IdempotencyOptions`.
+
 ### How it works
 
 All the atomicity guarantees live behind one method on `IIdempotencyStore`:
@@ -393,6 +415,12 @@ for which EF Core version line each target framework supports. Atomicity
 comes from the table's primary key (`Key`) for new reservations, and from EF
 Core's optimistic concurrency check for reclaiming an abandoned one — no raw
 SQL required.
+
+`PurgeExpiredAsync` reads and deletes expired rows in pages of 500 rather
+than loading the entire expired backlog into memory at once — one round trip
+per page in the common case, falling back to a slower row-by-row delete only
+for a page where a row was concurrently reclaimed by `TryReserveAsync` since
+it was read.
 
 #### Writing your own
 
@@ -682,6 +710,30 @@ builder.Services.AddIdempo(configureHttp: http =>
     http.KeyResolver = (context, rawKey) => $"{context.User.FindFirst("tenant_id")?.Value}:{rawKey}");
 ```
 
+### Endpoint üzrə override-lər
+
+Yuxarıdakı bütün opsiyalar defolt olaraq bütün tətbiq üçün keçərlidir. Tək bir
+endpoint (və ya bir controller-də bütün action-lar) `PendingTimeout`,
+`CompletedTtl`, `RequireHeaderOnMutatingRequests` və `MaxRequestBodyBytes`
+dəyərlərini qalan tətbiqə toxunmadan override edə bilər — məsələn, ödəniş
+endpoint-i digərlərindən daha uzun ömürlü və ya daha ciddi davranış tələb
+edəndə:
+
+```csharp
+// Minimal API
+app.MapPost("/payments", Handler)
+    .WithIdempotencyOptions(
+        requireHeaderOnMutatingRequests: true,
+        completedTtl: TimeSpan.FromDays(7));
+
+// MVC controller action
+[IdempotencyOptions(RequireHeaderOnMutatingRequests = true, CompletedTtlSeconds = 604_800)]
+public IActionResult CreatePayment(...) { ... }
+```
+
+Boş buraxılan hər property özünü tətbiq-üzrə `IdempotencyOptions`-a geri
+qaytarır.
+
 ### Necə işləyir
 
 Bütün atomiklik zəmanətləri `IIdempotencyStore` üzərindəki bir metodun
@@ -904,6 +956,11 @@ target framework-ü dəstəklədiyi üçün bax: [Versiya uyğunluğu](#versiya-
 Atomiklik yeni rezervasiyalar üçün cədvəlin primary key-indən (`Key`), tərk
 edilmiş rezervasiyanı bərpa etmək üçün isə EF Core-un optimistic concurrency
 yoxlamasından gəlir — heç bir xam SQL lazım deyil.
+
+`PurgeExpiredAsync` bütün müddəti bitmiş sətirləri bir dəfəyə yaddaşa yükləmək
+əvəzinə 500-lük səhifələrlə oxuyub silir — adi halda hər səhifə üçün tək bir
+round-trip, yalnız bir sətir `TryReserveAsync` tərəfindən oxunduqdan sonra
+paralel olaraq bərpa edilibsə həmin səhifə üçün sətir-sətir silməyə keçir.
 
 #### Özünüzünkünü yazmaq
 

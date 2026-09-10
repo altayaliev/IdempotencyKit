@@ -39,18 +39,32 @@ public sealed class IdempotencyMiddleware
     {
         var options = optionsAccessor.Value;
         var cancellationToken = context.RequestAborted;
+        var endpoint = context.GetEndpoint();
 
         if (!options.Methods.Contains(context.Request.Method) ||
-            context.GetEndpoint()?.Metadata.GetMetadata<IdempotencyIgnoreAttribute>() is not null)
+            endpoint?.Metadata.GetMetadata<IdempotencyIgnoreAttribute>() is not null)
         {
             await _next(context);
             return;
         }
 
+        // Per-endpoint overrides (see IdempotencyOptionsAttribute) layer on top of the app-wide
+        // options; anything the endpoint didn't set falls back to the value above.
+        var endpointOverride = endpoint?.Metadata.GetMetadata<IdempotencyOptionsAttribute>();
+        var pendingTimeout = endpointOverride?.PendingTimeoutSeconds is { } pendingTimeoutSeconds
+            ? TimeSpan.FromSeconds(pendingTimeoutSeconds)
+            : options.PendingTimeout;
+        var completedTtl = endpointOverride?.CompletedTtlSeconds is { } completedTtlSeconds
+            ? TimeSpan.FromSeconds(completedTtlSeconds)
+            : options.CompletedTtl;
+        var requireHeaderOnMutatingRequests =
+            endpointOverride?.RequireHeaderOnMutatingRequests ?? options.RequireHeaderOnMutatingRequests;
+        var maxRequestBodyBytes = endpointOverride?.MaxRequestBodyBytes ?? options.MaxRequestBodyBytes;
+
         var rawKey = context.Request.Headers[options.HeaderName].ToString();
         if (string.IsNullOrWhiteSpace(rawKey))
         {
-            if (options.RequireHeaderOnMutatingRequests)
+            if (requireHeaderOnMutatingRequests)
             {
                 logger.LogWarning("Rejected {Method} {Path}: missing required '{Header}' header.",
                     context.Request.Method, context.Request.Path, options.HeaderName);
@@ -74,11 +88,11 @@ public sealed class IdempotencyMiddleware
             return;
         }
 
-        if (context.Request.ContentLength > options.MaxRequestBodyBytes)
+        if (context.Request.ContentLength > maxRequestBodyBytes)
         {
             logger.LogWarning(
                 "Skipping idempotency for {Method} {Path}: request body ({Length} bytes) exceeds MaxRequestBodyBytes ({Max}).",
-                context.Request.Method, context.Request.Path, context.Request.ContentLength, options.MaxRequestBodyBytes);
+                context.Request.Method, context.Request.Path, context.Request.ContentLength, maxRequestBodyBytes);
             await _next(context);
             return;
         }
@@ -91,7 +105,7 @@ public sealed class IdempotencyMiddleware
         var fingerprint = await ComputeFingerprintAsync(context, fingerprintProvider, cancellationToken);
 
         var reservation = await store.TryReserveAsync(
-            key, fingerprint, options.PendingTimeout, options.CompletedTtl, cancellationToken);
+            key, fingerprint, pendingTimeout, completedTtl, cancellationToken);
 
         metrics.RecordReservation(reservation.Kind);
         activity?.SetTag("idempo.outcome", reservation.Kind.ToString());
@@ -150,7 +164,7 @@ public sealed class IdempotencyMiddleware
                 .Where(h => !ExcludedReplayHeaders.Contains(h.Key))
                 .ToDictionary(h => h.Key, h => h.Value.Select(v => v ?? string.Empty).ToArray()),
             CreatedAt = DateTimeOffset.UtcNow,
-            ExpiresAt = DateTimeOffset.UtcNow + options.CompletedTtl
+            ExpiresAt = DateTimeOffset.UtcNow + completedTtl
         };
 
         try

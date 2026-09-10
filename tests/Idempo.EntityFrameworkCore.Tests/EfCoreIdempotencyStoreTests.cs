@@ -92,6 +92,26 @@ public sealed class EfCoreIdempotencyStoreTests : IdempotencyStoreContractTests,
     }
 
     [Fact]
+    public async Task PurgeExpiredAsync_removes_more_than_one_page_worth_of_expired_rows()
+    {
+        // PurgeExpiredAsync reads and deletes in pages of 500 internally; this exercises the
+        // multi-page loop rather than the single-round-trip common case already covered above.
+        const int RowCount = 550;
+        var timeProvider = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var store = CreateStore(timeProvider);
+
+        for (var i = 0; i < RowCount; i++)
+        {
+            await store.TryReserveAsync($"{UniqueKey()}-{i}", "fp", PendingTimeout, CompletedTtl);
+        }
+
+        timeProvider.Advance(PendingTimeout + TimeSpan.FromSeconds(1));
+
+        Assert.Equal(RowCount, await store.PurgeExpiredAsync());
+        Assert.Equal(0, await store.PurgeExpiredAsync());
+    }
+
+    [Fact]
     public async Task Reservation_survives_across_separate_DbContext_instances()
     {
         // Simulates two different application instances (or two requests handled by different
